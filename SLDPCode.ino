@@ -18,6 +18,9 @@ void setup() {
   HRS.blinkOnPulse(13);
   HRS.setThreshold(550);
 
+  if(HRS.begin()){
+    Serial.println("HBS On");
+  }
 }
 void prompt(){
     while(notBreak){
@@ -28,6 +31,7 @@ void prompt(){
     }
     if(digitalRead(yes) == LOW){
       Serial.println("Yes");
+      wantHBS = true;
       break;
     }
     else if (digitalRead(no) == LOW){
@@ -130,10 +134,11 @@ void loop() {
     while (digitalRead(misc) == LOW) {
     }
   }
-  prompt();
+  if(!wantHBS){
+    prompt();
+  }
   while (digitalRead(yes) == LOW) {
   }
-  Serial.println("Done");
   delay(200);
 }
 
