@@ -23,11 +23,12 @@ void setup() {
   }
 }
 void prompt(){
+  //prompt user
     while(notBreak){
     Serial.println("Press Misc to end");
     Serial.println("Do u want heart beat sensor?");
-    Serial.println("Press Yes or No");
-    while (digitalRead(yes) == HIGH && digitalRead(no) == HIGH && digitalRead(misc) == HIGH) {
+    Serial.println("Press Yes or No");  
+    while (digitalRead(yes) == HIGH && digitalRead(no) == HIGH && digitalRead(misc) == HIGH) { //wtf is this empty?
     }
     if(digitalRead(yes) == LOW){
       Serial.println("Yes");
@@ -81,7 +82,7 @@ void prompt(){
       turnoff();
       break;
     }
-    while (digitalRead(yes) == LOW || digitalRead(no) == LOW) {
+    while (digitalRead(yes) == LOW || digitalRead(no) == LOW) { // while pressed, puase
     }
     Serial.println("Do u want thermometer?");
     Serial.println("Press Yes or No");
