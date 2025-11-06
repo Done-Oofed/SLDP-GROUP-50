@@ -170,7 +170,21 @@ void HRS(){
   wantHRS=false;
 }
 void temp(){
-  //do same loop of iter then in loop code to find temp
+  iter=0;
+  tempC=0;
+  tempF=0;
+  while(iter<100){
+  tempC += mlx.readObjectTempC();
+  tempF += mlx.readObjectTempF();
+  iter++;
+  }
+  tempC =tempC/iter;
+  tempF =tempF/iter;
+  //prints values w/ 2 deci places
+  sprintf(readingC, "Current Temp *C: %.2f%%", tempC);
+  sprintf(readingF, "Current Temp *F: %.2f%%", tempF);
+  Serial.println(readingC);
+  Serial.println(readingF);
   wantTemp=false;
 }
 void turnon(){
