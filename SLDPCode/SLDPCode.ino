@@ -13,6 +13,40 @@ String sys
 LiquidCrystal_I2C lcd(0x27,20,4);
 MAX30105 GLC;
 
+const char eyes_0[] PROGMEM = "=== ===";
+const char eyes_1[] PROGMEM = "--- ---";
+const char eyes_2[] PROGMEM = "-   -";
+const char eyes_3[] PROGMEM = "o   o";
+const char eyes_4[] PROGMEM = "O   O";
+const char eyes_5[] PROGMEM = "-   -";
+const char eyes_6[] PROGMEM = "--- ---";
+const char eyes_7[] PROGMEM = "-   -";
+const char eyes_8[] PROGMEM = "o   o";
+const char eyes_9[] PROGMEM = "O   O";
+
+const char* const eyes[] PROGMEM = {
+  eyes_0, eyes_1, eyes_2, eyes_3, eyes_4,
+  eyes_5, eyes_6, eyes_7, eyes_8, eyes_9
+};
+
+// init  faces for screen to PROG MEM (save space from dRAM)
+const char mouths_0[] PROGMEM = "___";
+const char mouths_1[] PROGMEM = "---";
+const char mouths_2[] PROGMEM = "_ _";
+const char mouths_3[] PROGMEM = ". .";
+const char mouths_4[] PROGMEM = "_._";
+const char mouths_5[] PROGMEM = "...";
+const char mouths_6[] PROGMEM = "_..";
+const char mouths_7[] PROGMEM = "-.-";
+const char mouths_8[] PROGMEM = "._.";
+const char mouths_9[] PROGMEM = "---";
+
+const char* const mouths[] PROGMEM = {
+  mouths_0, mouths_1, mouths_2, mouths_3, mouths_4,
+  mouths_5, mouths_6, mouths_7, mouths_8, mouths_9
+};
+const uint8_t frameCount = sizeof(eyes) / sizeof(eyes[0]);
+
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(115200);
@@ -25,8 +59,13 @@ void setup() {
   GLC.enableDIETEMPRDY();
   GLC.setPulseAmplitudeGreen(0);
 }
-//Dont worry about prompt(), it should work correctly and only changes the wantHBS and wantTemp if user presses yes
 
+void turnoff(){
+  lcd.print(F("Turn LCD off"));
+  off=true;
+  lcd.noBacklight();
+}
+//Dont worry about prompt(), it should work correctly and only changes the wantHBS and wantTemp if user presses yes
 void questioning(bool sensor){
   String method;
 
@@ -90,11 +129,7 @@ void prompt(){
   turnoff();
   notBreak=false;
 }
-*void turnoff(){
-  lcd.print(F("Turn LCD off"));
-  off=true;
-  lcd.noBacklight();
-}*/
+
 void HRS(){
   long irValue = 0;
   byte rates[6] = {0};
@@ -334,94 +369,55 @@ void SP02(){
   }
   wantSPO2=false;
 }
-void printFrame(int i) { // should probs move this global so there's little redundancy
-  const char* eyes[] = {
-    "=== ===",  // two eyes, left/right
-    "--- ---",
-    "-   -",
-    "o   o",
-    "O   O",
-    "-   -",
-    "--- ---",
-    "-   -",
-    "o   o",
-    "O   O"
-  };
-  const char* mouths[] = {
-    "___",   // solid line, powering up
-    "---",   // simple neutral line
-    "_ _",   // small gap
-    ". .",   // dots as LEDs
-    "_._",   // separated parts
-    "...",   // idle
-    "_..",   // starting up
-    "-.-",   // blinking line
-    "._.",   // symmetrical idle
-    "---"    // stable line
-  };
-    lcd.clear();
-    char line[21]; // 20 chars + null
 
-    // Top border
-    strcpy(line, "+------------------+");
-    lcd.setCursor(0, 0);
-    lcd.print(line);
+void drawCenteredRow(uint8_t row, const char* str) {
+  char buffer[21];
+  memset(buffer, ' ', 20);
+  buffer[0] = '|';
+  buffer[19] = '|';
 
-    // Eyes row — dynamically center
-    memset(line, ' ', 20);
-    line[0] = '|';
-    line[19] = '|';
-    int startCol = (18 - strlen(eyes[i])) / 2 + 1; // 18 = inner width, +1 for left border
-    memcpy(line + startCol, eyes[i], strlen(eyes[i]));
-    line[20] = '\0';
-    lcd.setCursor(0, 1);
-    lcd.print(line);
+  char temp[20];
+  strcpy_P(temp, str);
 
-    // Mouth row — dynamically center
-    memset(line, ' ', 20);
-    line[0] = '|';
-    line[19] = '|';
-    int startColMouth = (18 - strlen(mouths[i])) / 2 + 1;
-    memcpy(line + startColMouth, mouths[i], strlen(mouths[i]));
-    line[20] = '\0';
-    lcd.setCursor(0, 2);
-    lcd.print(line);
+  int offset = (18 - strlen(temp)) / 2 + 1;
+  memcpy(buffer + offset, temp, strlen(temp));
 
-    // Bottom border
-    strcpy(line, "+------------------+");
-    lcd.setCursor(0, 3);
-    lcd.print(line);
+  buffer[20] = '\0';
+  lcd.setCursor(0, row);
+  lcd.print(buffer);
 }
-void turnon(){
-  const char* eyes[] = {
-    "=== ===",  // two eyes, left/right
-    "--- ---",
-    "-   -",
-    "o   o",
-    "O   O",
-    "-   -",
-    "--- ---",
-    "-   -",
-    "o   o",
-    "O   O"
-  };
+
+void printFrame(uint8_t i) {
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print(F("+------------------+"));
+
+  drawCenteredRow(1, (PGM_P)pgm_read_ptr(&eyes[i]));
+  drawCenteredRow(2, (PGM_P)pgm_read_ptr(&mouths[i]));
+
+  lcd.setCursor(0, 3);
+  lcd.print(F("+------------------+"));
+}
+
+void turnon() {
   lcd.backlight();
 
-  const int frameCount = sizeof(eyes) / sizeof(eyes[0]);
+  for (uint8_t i = 0; i < frameCount; i++) {
+    printFrame(i);
+    delay(50);
+  }
 
-  for (int i = 0; i < frameCount; i++) {
-        printFrame(i);
-        delay(50);
-    }
   delay(200);
   lcd.clear();
   lcd.print(F("Welcome to:"));
   lcd.setCursor(0, 1);
   lcd.print(F("Beep Bop Easy Doc"));
+
   delay(2000);
-  notBreak=true;
-  off=false;
-}*/
+  notBreak = true;
+  off = false;
+}
 void loop() {
   if(wantHRS){
     HRS();
