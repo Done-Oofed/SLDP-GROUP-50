@@ -5,6 +5,7 @@
 #include "spo2_algorithm.h"
 #include <avr/io.h>
 #include <avr/pgmspace.h>
+#include <Adafruit_MLX90614.h>
 uint8_t flags = 0;
 #define WANT_HRS   0x01
 #define WANT_TEMP  0x02
@@ -12,6 +13,11 @@ uint8_t flags = 0;
 #define IS_OFF     0x08
 #define NOT_BREAK  0x10
 #define WANT_GLUC  0x20
+uint8_t done = 0;
+#define DONE_HRS   0x01
+#define DONE_TEMP  0x02
+#define DONE_SPO2  0x04
+#define DONE_GLUC  0x08
 const char eyes0[] PROGMEM = "=== ===";
 const char eyes1[] PROGMEM = "--- ---";
 const char eyes2[] PROGMEM = "-   -";
@@ -40,6 +46,8 @@ byte beats = 0;
 
 LiquidCrystal_I2C lcd(0x27,20,4);
 MAX30105 GLC;
+Adafruit_MLX90614 mlx = Adafruit_MLX90614();
+
 void calibrate() {
   for (byte x = 0; x < 3; x++) {
     lcd.print(F("Calibrating."));
@@ -129,6 +137,9 @@ void setup() {
   if (!GLC.begin(Wire, I2C_SPEED_FAST)) {
     Serial.println(F("MAX30102 was not found. Please check wiring/power."));
   }
+  if (!mlx.begin()) {
+    Serial.println("Error");
+  }
   GLC.setup();
   GLC.setPulseAmplitudeRed(0x0A);
   GLC.enableDIETEMPRDY();
@@ -138,10 +149,10 @@ void setup() {
 }
 void prompt(){
     while (flags & NOT_BREAK) {
-    if (askYesNo("heart beat?")) { flags |= WANT_HRS; break; }
-    if (askYesNo("SPO2?")) { flags |= WANT_SPO2; break; }
-    if (askYesNo("Glucose?")) { flags |= WANT_GLUC; break; }
-    if (askYesNo("thermometer?")) { flags |= WANT_TEMP; break; }
+    if(!(done & DONE_HRS)){ if (askYesNo("heart beat?")) { flags |= WANT_HRS; done |= DONE_HRS; break;}}
+    if(!(done & DONE_SPO2)){ if (askYesNo("SPO2?")) { flags |= WANT_SPO2; done |= DONE_SPO2; break;}}
+    if(!(done & DONE_GLUC)){ if (askYesNo("Glucose?")) { flags |= WANT_GLUC; done |= DONE_GLUC; break;}}
+    if(!(done & DONE_TEMP)){ if (askYesNo("thermometer?")) { flags |= WANT_TEMP; done |= DONE_TEMP; break;}}
     lcd.clear();
     lcd.setCursor(0, 1);
     lcd.print(F("Goodbye!"));
@@ -155,6 +166,18 @@ void turnoff(){
   lcd.print(F("Turn LCD off"));
   flags |= IS_OFF;
   lcd.noBacklight();
+  if((done & DONE_HRS)){
+    done &= ~DONE_HRS;
+  }
+  if((done & DONE_SPO2)){
+    done &= ~DONE_SPO2;
+  }
+  if((done & DONE_GLUC)){
+    done &= ~DONE_GLUC;
+  }
+  if((done & DONE_TEMP)){
+    done &= ~DONE_TEMP;
+  }
 }
 void HRS(bool want){
   byte rates[6] = {0};
@@ -210,7 +233,7 @@ void temperature(){
   lcd.clear();
   calibrate();
   while (iter < 250) {
-    tempF = GLC.readTemperatureF();
+    tempF = mlx.readObjectTempF();
     if (iter % 25 == 0) showProgress(iter, 250);
     iter++;
   }
