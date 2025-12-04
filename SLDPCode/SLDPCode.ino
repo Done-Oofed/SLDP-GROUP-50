@@ -1,447 +1,402 @@
 #include <LiquidCrystal_I2C.h>
 #include <Wire.h>
 #include <MAX30105.h> //GLC library
-//#include <string.h>
+#include "heartRate.h"
 #include "spo2_algorithm.h"
 #include <avr/io.h>
-bool wantHRS = false;
-bool wantTEMP = false;
-bool wantSPO2 = false;
-bool off = true;
-bool notBreak = true;
-String sys
+#include <avr/pgmspace.h>
+#include <Adafruit_MLX90614.h>
+uint8_t flags = 0;
+#define WANT_HRS   0x01
+#define WANT_TEMP  0x02
+#define WANT_SPO2  0x04
+#define IS_OFF     0x08
+#define NOT_BREAK  0x10
+#define WANT_GLUC  0x20
+uint8_t done = 0;
+#define DONE_HRS   0x01
+#define DONE_TEMP  0x02
+#define DONE_SPO2  0x04
+#define DONE_GLUC  0x08
+const char eyes0[] PROGMEM = "=== ===";
+const char eyes1[] PROGMEM = "--- ---";
+const char eyes2[] PROGMEM = "-   -";
+const char eyes3[] PROGMEM = "o   o";
+const char eyes4[] PROGMEM = "O   O";
+const char eyes5[] PROGMEM = "-   -";
+const char eyes6[] PROGMEM = "--- ---";
+const char eyes7[] PROGMEM = "-   -";
+const char eyes8[] PROGMEM = "o   o";
+const char eyes9[] PROGMEM = "O   O";
+const char mouths0[] PROGMEM = "___";
+const char mouths1[] PROGMEM = "---";
+const char mouths2[] PROGMEM = "_ _";
+const char mouths3[] PROGMEM = ". .";
+const char mouths4[] PROGMEM = "_._";
+const char mouths5[] PROGMEM = "...";
+const char mouths6[] PROGMEM = "_..";
+const char mouths7[] PROGMEM = "-.-";
+const char mouths8[] PROGMEM = "._.";
+const char mouths9[] PROGMEM = "---";
+const char* const eyes[] PROGMEM = {eyes0, eyes1, eyes2, eyes3, eyes4, eyes5, eyes6, eyes7, eyes8, eyes9};
+const char* const mouths[] PROGMEM = {mouths0, mouths1, mouths2, mouths3, mouths4, mouths5, mouths6, mouths7, mouths8, mouths9};
+
+byte sp = 0;
+byte beats = 0;
+
 LiquidCrystal_I2C lcd(0x27,20,4);
 MAX30105 GLC;
+Adafruit_MLX90614 mlx = Adafruit_MLX90614();
 
-const char eyes_0[] PROGMEM = "=== ===";
-const char eyes_1[] PROGMEM = "--- ---";
-const char eyes_2[] PROGMEM = "-   -";
-const char eyes_3[] PROGMEM = "o   o";
-const char eyes_4[] PROGMEM = "O   O";
-const char eyes_5[] PROGMEM = "-   -";
-const char eyes_6[] PROGMEM = "--- ---";
-const char eyes_7[] PROGMEM = "-   -";
-const char eyes_8[] PROGMEM = "o   o";
-const char eyes_9[] PROGMEM = "O   O";
-
-const char* const eyes[] PROGMEM = {
-  eyes_0, eyes_1, eyes_2, eyes_3, eyes_4,
-  eyes_5, eyes_6, eyes_7, eyes_8, eyes_9
-};
-
-// init  faces for screen to PROG MEM (save space from dRAM)
-const char mouths_0[] PROGMEM = "___";
-const char mouths_1[] PROGMEM = "---";
-const char mouths_2[] PROGMEM = "_ _";
-const char mouths_3[] PROGMEM = ". .";
-const char mouths_4[] PROGMEM = "_._";
-const char mouths_5[] PROGMEM = "...";
-const char mouths_6[] PROGMEM = "_..";
-const char mouths_7[] PROGMEM = "-.-";
-const char mouths_8[] PROGMEM = "._.";
-const char mouths_9[] PROGMEM = "---";
-
-const char* const mouths[] PROGMEM = {
-  mouths_0, mouths_1, mouths_2, mouths_3, mouths_4,
-  mouths_5, mouths_6, mouths_7, mouths_8, mouths_9
-};
-const uint8_t frameCount = sizeof(eyes) / sizeof(eyes[0]);
-
+void calibrate() {
+  for (byte x = 0; x < 3; x++) {
+    lcd.print(F("Calibrating."));
+    delay(1000);
+    lcd.clear();
+    lcd.print(F("Calibrating.."));
+    delay(1000);
+    lcd.clear();
+    lcd.print(F("Calibrating..."));
+    delay(1000);
+    lcd.clear();
+  }
+}
+void showProgress(byte iter, int total) {
+  lcd.print(F("      Progress"));
+  lcd.setCursor(0, 1);
+  lcd.print(F("["));
+  for (byte i = 0; i < 18; i++) {
+    if (i < (iter * 18) / total) lcd.print(F("#"));
+    else lcd.print(F("-"));
+  }
+  lcd.print(F("]"));
+  lcd.setCursor(0, 2);
+  lcd.print(F("    Keep Holding"));
+  lcd.setCursor(0, 0);
+}
+void displayResult(float value, const char* label, const char* unit, float high, float low, const char* highMsg, const char* lowMsg) {
+  lcd.clear();
+  lcd.print(label);
+  lcd.print(value);
+  lcd.print(unit);
+  delay(10000);
+  lcd.clear();
+  if (value > high) {
+    lcd.print(highMsg);
+    lcd.setCursor(0, 1);
+    lcd.print(F("too high, please"));
+    lcd.setCursor(0, 2);
+    lcd.print(F("see a doctor"));
+    lcd.setCursor(0, 0);
+    delay(10000);
+    lcd.clear();
+  } else if (value < low) {
+    lcd.print(lowMsg);
+    lcd.setCursor(0, 1);
+    lcd.print(F("too low, please"));
+    lcd.setCursor(0, 2);
+    lcd.print(F("see a doctor"));
+    lcd.setCursor(0, 0);
+    delay(10000);
+    lcd.clear();
+  }
+}
+bool askYesNo(const char* question) {
+  lcd.clear();
+  lcd.print(F("Do u want"));
+  lcd.setCursor(0, 1);
+  lcd.print(question);
+  lcd.setCursor(0, 2);
+  lcd.print(F("Press Yes or No"));
+  lcd.setCursor(0, 3);
+  lcd.print(F("Press Misc to end"));
+  lcd.setCursor(0, 0);
+  while (digitalRead(2) == HIGH && digitalRead(3) == HIGH && digitalRead(5) == HIGH) {}
+  if (digitalRead(2) == LOW) {
+    Serial.println(F("Yes"));
+    while (digitalRead(2) == LOW) {}
+    return true;
+  } else if (digitalRead(3) == LOW) {
+    Serial.println(F("No"));
+    while (digitalRead(3) == LOW) {}
+    return false;
+  } else {
+    while (digitalRead(5) == LOW) {}
+    lcd.clear();
+    lcd.setCursor(0, 1);
+    lcd.print(F("Goodbye!"));
+    lcd.setCursor(0, 0);
+    delay(2000);
+    turnoff();
+    return false;
+  }
+}
 void setup() {
-  // put your setup code here, to run once:
   Serial.begin(115200);
   lcd.init();
-  if (!GLC.begin(Wire, I2C_SPEED_FAST)) { // Start communication using fast I2C speed
-    Serial.println(F("MAX30102 was not found. Please check wiring/power. "));
+  if (!GLC.begin(Wire, I2C_SPEED_FAST)) {
+    Serial.println(F("MAX30102 was not found. Please check wiring/power."));
   }
-  GLC.setup(); // Configure sensor with default settings for heart rate monitoring
-  GLC.setPulseAmplitudeRed(0x0A); // Set the red LED pulse amplitude (intensity) to a low value as an indicator
+  if (!mlx.begin()) {
+    Serial.println("Error");
+  }
+  GLC.setup();
+  GLC.setPulseAmplitudeRed(0x0A);
   GLC.enableDIETEMPRDY();
   GLC.setPulseAmplitudeGreen(0);
+  flags |= NOT_BREAK; 
+  flags |= IS_OFF;
 }
-
+void prompt(){
+    while (flags & NOT_BREAK) {
+    if(!(done & DONE_HRS)){ if (askYesNo("heart beat?")) { flags |= WANT_HRS; done |= DONE_HRS; break;}}
+    if(!(done & DONE_SPO2)){ if (askYesNo("SPO2?")) { flags |= WANT_SPO2; done |= DONE_SPO2; break;}}
+    if(!(done & DONE_GLUC)){ if (askYesNo("Glucose?")) { flags |= WANT_GLUC; done |= DONE_GLUC; break;}}
+    if(!(done & DONE_TEMP)){ if (askYesNo("thermometer?")) { flags |= WANT_TEMP; done |= DONE_TEMP; break;}}
+    lcd.clear();
+    lcd.setCursor(0, 1);
+    lcd.print(F("Goodbye!"));
+    lcd.setCursor(0, 0);
+    delay(2000);
+    turnoff();
+    flags &= ~NOT_BREAK;
+  }
+}
 void turnoff(){
   lcd.print(F("Turn LCD off"));
-  off=true;
+  flags |= IS_OFF;
   lcd.noBacklight();
-}
-//Dont worry about prompt(), it should work correctly and only changes the wantHBS and wantTemp if user presses yes
-void questioning(bool sensor){
-  String method;
-
-  if (sensor == "wantHRS"){
-    method = "Heart Rate";
+  if((done & DONE_HRS)){
+    done &= ~DONE_HRS;
   }
-  else if (sensor == "wantTEMP"){
-    method = "Temperature";
+  if((done & DONE_SPO2)){
+    done &= ~DONE_SPO2;
   }
-  else if (sensor == "wantSPO2"){
-    method = "Oxygen Levels";
+  if((done & DONE_GLUC)){
+    done &= ~DONE_GLUC;
   }
-
-	while(sensor == false){
-		while (digitalRead(2) == LOW || digitalRead(3) == LOW) {
-    }
-    lcd.clear();
-		lcd.print(F("Do u want"));
-    lcd.setCursor(0,1);
-    lcd.print(method);
-    lcd.setCursor(0,2);
-    lcd.print(F("Press Yes or No"));
-    lcd.setCursor(0,3);
-    lcd.print(F("Press Misc to end"));
-    lcd.setCursor(0,0);
-    
-    while (digitalRead(2) == HIGH && digitalRead(3) == HIGH && digitalRead(5) == HIGH){
-    }
-    if (digitalRead(2) == LOW){
-      Serial.println(F("Yes"));
-      sensor = true;
-      break;
-    } else if (digitalRead(3) == LOW){
-      Serial.println(F("No"));
-    }
-    else{
-      while (digitalRead(5) == LOW){
-      }
-      lcd.clear();
-      lcd.setCursor(0,1);
-      lcd.print(F("Goodbye!"));
-      lcd.setCursor(0,0);
-      delay(2000);
-      turnoff();
-      break;
-    }
+  if((done & DONE_TEMP)){
+    done &= ~DONE_TEMP;
   }
 }
-
-void prompt(){
-  questioning(wantHRS);
-  questioning(wantTEMP);
-  questioning(wantSPO2);
-  while (digitalRead(2) == LOW || digitalRead(3) == LOW) {
-  }
-  lcd.clear();
-  lcd.setCursor(0, 1);
-  lcd.print(F("Goodbye!"));
-  lcd.setCursor(0, 0);
-  delay(2000);
-  turnoff();
-  notBreak=false;
-}
-
-void HRS(){
-  long irValue = 0;
+void HRS(bool want){
   byte rates[6] = {0};
   byte rateSpot = 0;
   unsigned long lastBeat = 0;
   float beatsPerMinute = 0;
-  int16_t beatAvg = 0;
-
-  int iter = 0;
+  byte iter = 0;
   float bpm = 0;
-  int check = 0;
+  byte check = 0;
+  if(!want){
   lcd.print(F("Place finger firmly"));
   lcd.setCursor(0, 1);
-  lcd.print(F("on heartrate sensor"));
+  lcd.print(F("on sensor"));
   lcd.setCursor(0, 0);
   delay(5000);
   lcd.clear();
-  for (int x = 0; x < 3; x++){
-    lcd.print(F("Calibrating."));
-    delay(1000);
-    lcd.clear();
-    lcd.print(F("Calibrating.."));
-    delay(1000);
-    lcd.clear();
-    lcd.print(F("Calibrating..."));
-    delay(1000);
-    lcd.clear();
+  calibrate();
   }
-  while(iter<500){ //Change to how many times we want to loop through the sensing, then print out final average
-    irValue = GLC.getIR();
-  if (checkForBeat(irValue) == true)
-  {
-    //We sensed a beat!
-    long delta = millis() - lastBeat;
-    lastBeat = millis();
-
-    beatsPerMinute = 60 / (delta / 1000.0);
-
-    if (beatsPerMinute < 255 && beatsPerMinute > 20)
-    {
-      bpm += beatsPerMinute;
-      check++;
-      rates[rateSpot++] = (byte)beatsPerMinute; //Store this reading in the array
-      rateSpot %= 6; //Wrap variable
-
-      //Take average of readings
-      beatAvg = 0;
-      for (byte x = 0 ; x < 6 ; x++)
-        beatAvg += rates[x];
-      beatAvg /= 6;
+  while (iter < 250) {
+    int qm = GLC.getIR();
+    if (checkForBeat(qm) == true) {
+      long delta = millis() - lastBeat;
+      lastBeat = millis();
+      beatsPerMinute = 60 / (delta / 1000.0);
+      if (beatsPerMinute < 255 && beatsPerMinute > 20) {
+        bpm += beatsPerMinute;
+        check++;
+        rates[rateSpot++] = (byte)beatsPerMinute;
+        rateSpot %= 6;
+      }
     }
-  }
-  if(iter % 5 == 0){
-    lcd.print(F("      Progress"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("["));
-    for (int i = 0; i < 18; i++) {
-        if (i < (iter * 18) / 500) lcd.print(F("#")); //Change w total
-        else lcd.print(F("-"));
-    }
-    lcd.print(F("]"));
-    lcd.setCursor(0, 2);
-    lcd.print(F("    Keep Holding"));
-    lcd.setCursor(0, 0);
-  }
+    if (iter % 25 == 0) showProgress(iter, 250);
     iter++;
   }
-  lcd.clear();
-  lcd.print(F("Avg is: "));
-  lcd.print(bpm/check);
-  delay(10000);
-  lcd.clear();
-  if(bpm/check>100){
-    lcd.print(F("Your heartrate is"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("too high, please"));
-    lcd.setCursor(0, 2);
-    lcd.print(F("see a doctor"));
-    lcd.setCursor(0, 0);
-    delay(10000);
-    lcd.clear();
+  if(want){
+    beats = bpm/check;
   }
-  else if(bpm/check<60){
-    lcd.print(F("Your heartrate is"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("too low, please"));
-    lcd.setCursor(0, 2);
-    lcd.print(F("see a doctor"));
-    lcd.setCursor(0, 0);
-    delay(10000);
-    lcd.clear();
+  else{
+    Serial.println(bpm);
+    Serial.println(check);
+  displayResult(bpm / check, "Avg is: ", "", 100, 60, "Your heartrate is", "Your heartrate is");
+  flags &= ~WANT_HRS;
   }
-  wantHRS=false;
 }
 void temperature(){
-  int iter = 0;
+  byte iter = 0;
   float tempF = 0;
-  int check = 0;
   lcd.print(F("Place finger firmly"));
   lcd.setCursor(0, 1);
-  lcd.print(F("on temp sensor"));
+  lcd.print(F("on sensor"));
   lcd.setCursor(0, 0);
   delay(5000);
   lcd.clear();
-  for (int x = 0; x < 3; x++){
-    lcd.print(F("Calibrating."));
-    delay(1000);
-    lcd.clear();
-    lcd.print(F("Calibrating.."));
-    delay(1000);
-    lcd.clear();
-    lcd.print(F("Calibrating..."));
-    delay(1000);
-    lcd.clear();
+  calibrate();
+  while (iter < 250) {
+    tempF = mlx.readObjectTempF();
+    if (iter % 25 == 0) showProgress(iter, 250);
+    iter++;
   }
-  while(iter<500){
-    tempF = GLC.readTemperatureF();
-  if(iter % 5 == 0){
-  lcd.print(F("      Progress"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("["));
-    for (int i = 0; i < 18; i++) {
-        if (i < (iter * 18) / 500) lcd.print(F("#")); //Change w total
-        else lcd.print(F("-"));
-    }
-    lcd.print(F("]"));
-    lcd.setCursor(0, 2);
-    lcd.print(F("    Keep Holding"));
-    lcd.setCursor(0, 0);
-    Serial.print(iter);
-  }
-  iter++;
-  }
-  lcd.clear();
-  lcd.print(F("Temperature: "));
-  lcd.print(tempF);
-  lcd.print(F("F"));
-  delay(10000);
-  lcd.clear();
-  if(tempF>100){
-    lcd.print(F("Your temperature is"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("too high, please"));
-    lcd.setCursor(0, 2);
-    lcd.print(F("cool down"));
-    lcd.setCursor(0, 0);
-    delay(10000);
-    lcd.clear();
-  }
-  else if(tempF<60){
-    lcd.print(F("Your temperature is"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("too low, please"));
-    lcd.setCursor(0, 2);
-    lcd.print(F("heat up"));
-    lcd.setCursor(0, 0);
-    delay(10000);
-    lcd.clear();
-  }
-  wantTEMP=false;
+  displayResult(tempF, "Temperature: ", "F", 100, 60, "Your temperature is", "Your temperature is");
+  flags &= ~WANT_TEMP;
 }
-int freeMemory() {
-       extern int __heap_start, *__brkval;
-       int v;
-       int free = (int)&v - (__brkval == 0 ? (int)&__heap_start : (int)__brkval);
-       return free > 0 ? free : 0;  // Prevent negative values
-     }
-void SP02(){
-  // moved here to save persistent global RAM (used only during SP02 measurements)
-  int32_t bufferLength = 50; // data length (samples)
-  uint16_t irBuffer[50]; // infrared LED sensor data (temporary)
-  uint16_t redBuffer[50]; // red LED sensor data (temporary)
-  int32_t spo2 = 0; // SPO2 value (temporary)
-  int8_t validSPO2 = 0; // indicator (temporary)
-  int32_t heartRate = 0; // heart rate value (temporary)
-  int8_t validHeartRate = 0; // indicator (temporary)
-  int iter = 0;
-  int check = 0;
+void SP02(bool want){
+  int32_t bufferLength = 50;
+  uint16_t irBuffer[50];
+  uint16_t redBuffer[50];
+  int32_t spo2 = 0;
+  int8_t validSPO2 = 0;
+  int32_t heartRate = 0;
+  int8_t validHeartRate = 0;
+  byte max = 0;
   lcd.print(F("Place finger firmly"));
   lcd.setCursor(0, 1);
-  lcd.print(F("on SP02 sensor"));
+  lcd.print(F("on sensor"));
   lcd.setCursor(0, 0);
   delay(5000);
   lcd.clear();
-  for (int x = 0; x < 3; x++){
-    lcd.print(F("Calibrating."));
-    delay(1000);
-    lcd.clear();
-    lcd.print(F("Calibrating.."));
-    delay(1000);
-    lcd.clear();
-    lcd.print(F("Calibrating..."));
-    delay(1000);
-    lcd.clear();
-  }
-  for (byte i = 0 ; i < 50; i++)
-  {
-    while (GLC.available() == false) //do we have new data?
-      GLC.check();
-
+  calibrate();
+  for (byte i = 0; i < bufferLength; i++) {
+    while (GLC.available() == false) GLC.check();
     redBuffer[i] = GLC.getRed();
     irBuffer[i] = GLC.getIR();
-    GLC.nextSample(); //We're finished with this sample so move to next sample
-
-    Serial.print(F("red="));
-    Serial.print(redBuffer[i], DEC);
-    Serial.print(F(", ir="));
-    Serial.println(irBuffer[i], DEC);
+    GLC.nextSample();
   }
   maxim_heart_rate_and_oxygen_saturation(irBuffer, bufferLength, redBuffer, &spo2, &validSPO2, &heartRate, &validHeartRate);
-  
-  
-  lcd.clear();
-  lcd.print(F("SP02: "));
-  lcd.print(spo2);
-  delay(10000);
-  lcd.clear();
-  if(spo2>100){
-    lcd.print(F("Your temperature is"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("too high, please"));
-    lcd.setCursor(0, 2);
-    lcd.print(F("cool down"));
-    lcd.setCursor(0, 0);
-    delay(10000);
-    lcd.clear();
+ for(byte a = 0; a<20; a++)
+  {
+    //dumping the first 25 sets of samples in the memory and shift the last 75 sets of samples to the top
+    for (byte i = 25; i < 50; i++)
+    {
+      redBuffer[i - 25] = redBuffer[i];
+      irBuffer[i - 25] = irBuffer[i];
+    }
+
+    //take 25 sets of samples before calculating the heart rate.
+    for (byte i = 25; i < 50; i++)
+    {
+      while (GLC.available() == false) //do we have new data?
+        GLC.check(); //Check the sensor for new data
+
+      redBuffer[i] = GLC.getRed();
+      irBuffer[i] = GLC.getIR();
+      GLC.nextSample();
+
+      Serial.print(F("red="));
+      Serial.print(redBuffer[i], DEC);
+      Serial.print(F(", ir="));
+      Serial.print(irBuffer[i], DEC);
+
+      Serial.print(F(", HR="));
+      Serial.print(heartRate, DEC);
+
+      Serial.print(F(", HRvalid="));
+      Serial.print(validHeartRate, DEC);
+
+      Serial.print(F(", SPO2="));
+      Serial.print(spo2, DEC);
+
+      Serial.print(F(", SPO2Valid="));
+      Serial.println(validSPO2, DEC);
+    }
+    maxim_heart_rate_and_oxygen_saturation(irBuffer, bufferLength, redBuffer, &spo2, &validSPO2, &heartRate, &validHeartRate);
+    //After gathering 25 new samples recalculate HR and SP02
+    if(max < spo2){
+      max = spo2;
+    }
   }
-  else if(spo2<60){
-    lcd.print(F("Your temperature is"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("too low, please"));
-    lcd.setCursor(0, 2);
-    lcd.print(F("heat up"));
-    lcd.setCursor(0, 0);
-    delay(10000);
-    lcd.clear();
+  if(want){
+    sp = max;
   }
-  wantSPO2=false;
+  else{
+  displayResult(max, "SP02: ", "", 120, 60, "Your SPO2 is", "Your SPO2 is");
+  flags &= ~WANT_SPO2;
+  }
 }
-
-void drawCenteredRow(uint8_t row, const char* str) {
-  char buffer[21];
-  memset(buffer, ' ', 20);
-  buffer[0] = '|';
-  buffer[19] = '|';
-
-  char temp[20];
-  strcpy_P(temp, str);
-
-  int offset = (18 - strlen(temp)) / 2 + 1;
-  memcpy(buffer + offset, temp, strlen(temp));
-
-  buffer[20] = '\0';
-  lcd.setCursor(0, row);
-  lcd.print(buffer);
-}
-
-void printFrame(uint8_t i) {
+void printFrame(int i) {
+  char eyeStr[10];
+  char mouthStr[5];
+  strcpy_P(eyeStr, (char*)pgm_read_word(&eyes[i]));
+  strcpy_P(mouthStr, (char*)pgm_read_word(&mouths[i]));
   lcd.clear();
-
+  char line[21];
+  strcpy(line, "+------------------+");
   lcd.setCursor(0, 0);
-  lcd.print(F("+------------------+"));
-
-  drawCenteredRow(1, (PGM_P)pgm_read_ptr(&eyes[i]));
-  drawCenteredRow(2, (PGM_P)pgm_read_ptr(&mouths[i]));
-
+  lcd.print(line);
+  memset(line, ' ', 20);
+  line[0] = '|';
+  line[19] = '|';
+  int startCol = (18 - strlen(eyeStr)) / 2 + 1;
+  memcpy(line + startCol, eyeStr, strlen(eyeStr));
+  line[20] = '\0';
+  lcd.setCursor(0, 1);
+  lcd.print(line);
+  memset(line, ' ', 20);
+  line[0] = '|';
+  line[19] = '|';
+  int startColMouth = (18 - strlen(mouthStr)) / 2 + 1;
+  memcpy(line + startColMouth, mouthStr, strlen(mouthStr));
+  line[20] = '\0';
+  lcd.setCursor(0, 2);
+  lcd.print(line);
+  strcpy(line, "+------------------+");
   lcd.setCursor(0, 3);
-  lcd.print(F("+------------------+"));
+  lcd.print(line);
 }
-
+void GLUC(){
+  SP02(true);
+  HRS(true);
+  byte eq = 16714.61 + .47*beats - 351.045*sp + 1.85 * (sp*sp);
+  byte but = 0;
+  lcd.clear();
+  lcd.print(F("Did you recently"));
+  lcd.setCursor(0,1);
+  lcd.print(F("eat food?"));
+  while (digitalRead(2) == HIGH && digitalRead(3) == HIGH) {} //2 yes 3 no
+  if(digitalRead(2)==HIGH){
+    but = 2;
+  }
+  else{
+    but = 3;
+  }
+  while (digitalRead(2) == LOW || digitalRead(3) == LOW) {}
+  if(but == 2){
+    displayResult(eq, "Glucose: ", "", 120, 60, "Your Glucose is", "Your Glucose is");
+  }
+  else{
+    displayResult(eq, "Glucose: ", "", 100, 60, "Your Glucose is", "Your Glucose is");
+  }
+  flags &= ~WANT_GLUC;
+}
 void turnon() {
   lcd.backlight();
-
-  for (uint8_t i = 0; i < frameCount; i++) {
+  const int frameCount = 10;
+  for (int i = 0; i < frameCount; i++) {
     printFrame(i);
     delay(50);
   }
-
   delay(200);
   lcd.clear();
   lcd.print(F("Welcome to:"));
   lcd.setCursor(0, 1);
   lcd.print(F("Beep Bop Easy Doc"));
-
   delay(2000);
-  notBreak = true;
-  off = false;
+  flags |= NOT_BREAK;
+  flags &= ~IS_OFF;
 }
 void loop() {
-  if(wantHRS){
-    HRS();
-  }
-  if(wantTEMP){
-    temperature();
-  }
-  if(wantSPO2){
-    SP02();
-  }
-  while(off){
+  if (flags & WANT_HRS) HRS(false);
+  if (flags & WANT_TEMP) temperature();
+  if (flags & WANT_SPO2) SP02(false);
+  if (flags & WANT_GLUC) GLUC();
+  while (flags & IS_OFF) {
     Serial.println(F("LCD off"));
-    while (digitalRead(5) == HIGH) {
-    }
+    while (digitalRead(5) == HIGH) {}
     Serial.println(F("Button pressed"));
-    Serial.println(freeMemory());
-    //turnon();
-    Serial.println(freeMemory());
-    while (digitalRead(5) == LOW) {
-    }
+    turnon();
+    while (digitalRead(5) == LOW) {}
   }
-  if(!wantHRS&&!wantTEMP&&!wantSPO2){
-    prompt();
-  }
+  if (!(flags & (WANT_HRS | WANT_TEMP | WANT_SPO2 | WANT_GLUC))) prompt();
   delay(200);
   lcd.clear();
 }
